@@ -1,0 +1,7 @@
+# Python-related directories to ignore
+__pycache__/
+.venv/
+
+# Advent of Code input files to ignore
+example*.txt
+input.txt

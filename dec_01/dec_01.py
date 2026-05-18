@@ -1,15 +1,44 @@
+from collections import deque
+from collections.abc import Iterable, Iterator
+import itertools
 import pathlib
 import sys
 
 
+def parse_report(sonar_sweep_report: str) -> list[int]:
+    return list(map(int, sonar_sweep_report.strip().split('\n')))
+
+
+def increasing(depths: tuple[int, int]) -> bool:
+    depth_1, depth_2 = depths
+    return depth_1 < depth_2
+
+
 def part_1(file: pathlib.Path) -> None:
-    file.read_text(encoding='ascii')
-    print('part 1:', )
+    sonar_sweep_report = file.read_text(encoding='ascii')
+    depths = parse_report(sonar_sweep_report)
+    depth_pairs = itertools.pairwise(depths)
+    depth_is_increasing = map(increasing, depth_pairs)
+    print('part 1:', sum(depth_is_increasing))
+
+
+def triplewise[T](iterable: Iterable[T]) -> Iterator[tuple[T, T, T]]:
+    iterator = iter(iterable)
+    triple = deque(itertools.islice(iterator, 2), maxlen=3)
+    for next_item in iterator:
+        triple.append(next_item)
+        item_0, item_1, item_2 = triple
+        yield (item_0, item_1, item_2)
 
 
 def part_2(file: pathlib.Path) -> None:
-    file.read_text(encoding='ascii')
-    print('part 2:', )
+    sonar_sweep_report = file.read_text(encoding='ascii')
+    depths = parse_report(sonar_sweep_report)
+    windows = triplewise(depths)
+    window_sums = map(sum, windows)
+    window_sum_pairs = itertools.pairwise(window_sums)
+    sum_is_increasing = map(increasing, window_sum_pairs)
+    print('part 2:', sum(sum_is_increasing))
 
 
 if __name__ == '__main__':

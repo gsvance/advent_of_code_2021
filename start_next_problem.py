@@ -52,6 +52,8 @@ def main() -> None:
     next_example_1.write_text('')
     next_input.write_text('')
 
+    print(f'New folder created: {next_folder.name!s}/')
+
 
 if __name__ == '__main__':
     main()

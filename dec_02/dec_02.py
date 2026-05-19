@@ -1,81 +1,92 @@
 from dataclasses import dataclass
+from enum import StrEnum
 import pathlib
 import sys
-from typing import Final, Self
+from typing import Self
 
 
-@dataclass(frozen=True, match_args=False, kw_only=True, slots=True)
-class Vector:
+class Direction(StrEnum):
+    FORWARD = 'forward'
+    DOWN = 'down'
+    UP = 'up'
+
+
+@dataclass(frozen=True, match_args=False, slots=True)
+class Command:
+    direction: Direction
+    units: int
+
+    @classmethod
+    def parse(cls, command_string: str) -> Self:
+        direction_string, units_string = command_string.strip().split()
+        direction = Direction(direction_string)
+        units = int(units_string)
+        return cls(direction, units)
+
+
+def parse_commands(planned_course: str) -> list[Command]:
+    return list(map(Command.parse, planned_course.strip().split('\n')))
+
+
+@dataclass(match_args=False, slots=True)
+class Submarine:
     horizontal: int
     depth: int
 
-    def __add__(self, other: Self) -> Self:
-        return self.__class__(
-            horizontal=self.horizontal + other.horizontal,
-            depth=self.depth + other.depth,
-        )
 
-    def __rmul__(self, other: int) -> Self:
-        return self.__class__(
-            horizontal=self.horizontal * other,
-            depth=self.depth * other,
-        )
+def chart_course(commands: list[Command]) -> Submarine:
+    submarine = Submarine(horizontal=0, depth=0)
 
+    for command in commands:
+        match command.direction:
+            case Direction.FORWARD:
+                submarine.horizontal += command.units
+            case Direction.DOWN:
+                submarine.depth += command.units
+            case Direction.UP:
+                submarine.depth -= command.units
+            case _:
+                raise RuntimeError(f'invalid command: {command!r}')
 
-DIRECTION_VECTOR: Final[dict[str, Vector]] = {
-    'forward': Vector(horizontal=+1, depth=0),
-    'down': Vector(horizontal=0, depth=+1),
-    'up': Vector(horizontal=0, depth=-1),
-}
-
-
-def parse_vectors(planned_course: str) -> list[Vector]:
-    course_vectors: list[Vector] = []
-    for line in planned_course.strip().split('\n'):
-        direction, units = line.strip().split()
-        course_vectors.append(int(units) * DIRECTION_VECTOR[direction])
-    return course_vectors
+    return submarine
 
 
 def part_1(file: pathlib.Path) -> None:
     planned_course = file.read_text(encoding='ascii')
-    course_vectors = parse_vectors(planned_course)
-    start_vector = Vector(horizontal=0, depth=0)
-    final_position = sum(course_vectors, start=start_vector)
+    commands = parse_commands(planned_course)
+    final_position = chart_course(commands)
     print('part 1:', final_position.horizontal * final_position.depth)
 
 
 @dataclass(match_args=False, kw_only=True, slots=True)
-class Submarine:
+class AimedSubmarine:
     horizontal: int
     depth: int
     aim: int
 
 
-def chart_submarine_course(planned_course: str) -> Vector:
-    submarine = Submarine(horizontal=0, depth=0, aim=0)
+def chart_aimed_course(commands: list[Command]) -> AimedSubmarine:
+    submarine = AimedSubmarine(horizontal=0, depth=0, aim=0)
 
-    for line in planned_course.strip().split('\n'):
-        direction, units = line.strip().split()
-        x = int(units)
-
-        match direction:
-            case 'down':
-                submarine.aim += x
-            case 'up':
-                submarine.aim -= x
-            case 'forward':
-                submarine.horizontal += x
-                submarine.depth += submarine.aim * x
+    for command in commands:
+        match command.direction:
+            case Direction.FORWARD:
+                submarine.horizontal += command.units
+                submarine.depth += submarine.aim * command.units
+            case Direction.DOWN:
+                submarine.aim += command.units
+            case Direction.UP:
+                submarine.aim -= command.units
             case _:
-                raise RuntimeError(f'invalid direction {direction!r}')
+                raise RuntimeError(f'invalid command: {command!r}')
 
-    return Vector(horizontal=submarine.horizontal, depth=submarine.depth)
+    return submarine
 
 
 def part_2(file: pathlib.Path) -> None:
     planned_course = file.read_text(encoding='ascii')
-    final_position = chart_submarine_course(planned_course)
+    commands = parse_commands(planned_course)
+    final_position = chart_aimed_course(commands)
     print('part 2:', final_position.horizontal * final_position.depth)
 
 

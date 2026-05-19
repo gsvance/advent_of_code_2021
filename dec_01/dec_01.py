@@ -1,4 +1,3 @@
-from collections import deque
 from collections.abc import Iterable, Iterator
 import itertools
 import pathlib
@@ -24,11 +23,10 @@ def part_1(file: pathlib.Path) -> None:
 
 def triplewise[T](iterable: Iterable[T]) -> Iterator[tuple[T, T, T]]:
     iterator = iter(iterable)
-    triple = deque(itertools.islice(iterator, 2), maxlen=3)
-    for next_item in iterator:
-        triple.append(next_item)
-        item_0, item_1, item_2 = triple
-        yield (item_0, item_1, item_2)
+    item_0, item_1 = itertools.islice(iterator, 2)
+    for item_2 in iterator:
+        yield item_0, item_1, item_2
+        item_0, item_1 = item_1, item_2
 
 
 def part_2(file: pathlib.Path) -> None:

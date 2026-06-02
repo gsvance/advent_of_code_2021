@@ -20,7 +20,7 @@
             "program": "${file}",
             "cwd": "${fileDirname}",
             "console": "integratedTerminal",
-            "args": ["example_1.txt"]
+            "args": ["example_01.txt"]
         },
         {
             "name": "Example 2",
@@ -29,7 +29,7 @@
             "program": "${file}",
             "cwd": "${fileDirname}",
             "console": "integratedTerminal",
-            "args": ["example_2.txt"]
+            "args": ["example_02.txt"]
         },
         {
             "name": "Example 3",
@@ -38,7 +38,7 @@
             "program": "${file}",
             "cwd": "${fileDirname}",
             "console": "integratedTerminal",
-            "args": ["example_3.txt"]
+            "args": ["example_03.txt"]
         },
         {
             "name": "Example 4",
@@ -47,7 +47,7 @@
             "program": "${file}",
             "cwd": "${fileDirname}",
             "console": "integratedTerminal",
-            "args": ["example_4.txt"]
+            "args": ["example_04.txt"]
         },
         {
             "name": "Example 5",
@@ -56,7 +56,7 @@
             "program": "${file}",
             "cwd": "${fileDirname}",
             "console": "integratedTerminal",
-            "args": ["example_5.txt"]
+            "args": ["example_05.txt"]
         },
         {
             "name": "Example 6",
@@ -65,7 +65,7 @@
             "program": "${file}",
             "cwd": "${fileDirname}",
             "console": "integratedTerminal",
-            "args": ["example_6.txt"]
+            "args": ["example_06.txt"]
         },
         {
             "name": "Example 7",
@@ -74,7 +74,7 @@
             "program": "${file}",
             "cwd": "${fileDirname}",
             "console": "integratedTerminal",
-            "args": ["example_7.txt"]
+            "args": ["example_07.txt"]
         },
         {
             "name": "Example 8",
@@ -83,7 +83,70 @@
             "program": "${file}",
             "cwd": "${fileDirname}",
             "console": "integratedTerminal",
-            "args": ["example_8.txt"]
+            "args": ["example_08.txt"]
+        },
+        {
+            "name": "Example 9",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "cwd": "${fileDirname}",
+            "console": "integratedTerminal",
+            "args": ["example_09.txt"]
+        },
+        {
+            "name": "Example 10",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "cwd": "${fileDirname}",
+            "console": "integratedTerminal",
+            "args": ["example_10.txt"]
+        },
+        {
+            "name": "Example 11",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "cwd": "${fileDirname}",
+            "console": "integratedTerminal",
+            "args": ["example_11.txt"]
+        },
+        {
+            "name": "Example 12",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "cwd": "${fileDirname}",
+            "console": "integratedTerminal",
+            "args": ["example_12.txt"]
+        },
+        {
+            "name": "Example 13",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "cwd": "${fileDirname}",
+            "console": "integratedTerminal",
+            "args": ["example_13.txt"]
+        },
+        {
+            "name": "Example 14",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "cwd": "${fileDirname}",
+            "console": "integratedTerminal",
+            "args": ["example_14.txt"]
+        },
+        {
+            "name": "Example 15",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "cwd": "${fileDirname}",
+            "console": "integratedTerminal",
+            "args": ["example_15.txt"]
         }
     ]
 }

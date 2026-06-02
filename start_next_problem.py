@@ -44,7 +44,7 @@ def main() -> None:
 
     next_folder = Path('.', f'dec_{next_number:02d}')
     next_script = next_folder / f'{next_folder.name}.py'
-    next_example_1 = next_folder / 'example_1.txt'
+    next_example_1 = next_folder / 'example_01.txt'
     next_input = next_folder / 'input.txt'
 
     next_folder.mkdir()

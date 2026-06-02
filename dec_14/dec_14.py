@@ -104,14 +104,8 @@ def count_element_quantities(pair_counter: Counter[str]) -> Counter[str]:
     quantities: Counter[str] = Counter()
 
     for element_pair, count in pair_counter.items():
-
-        if len(element_pair) == 1:
-            quantities[element_pair] += count
-            continue
-
-        left_element, right_element = element_pair
-        quantities[left_element] += count
-        quantities[right_element] += count
+        for element in element_pair:
+            quantities[element] += count
 
     # Every element is double-counted by the pair counter, so cut all the
     # quantities in half before returning

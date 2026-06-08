@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import matplotlib.pyplot as plt
 import pathlib
 import sys
 from typing import Final, Self
@@ -82,19 +83,19 @@ def decide_velocity_bounds(target_area: VectorBounds) -> VectorBounds:
     # Here we establish very broad limits for the range of velocities we ought
     # to consider. The general heuristic here is "don't try anything with such
     # high velocity that it'll just skip past the target area in one step."
-    vx_max = (target_area.max.x - INITIAL_POSITION.x) + 1
-    vy_max_absolute = abs(target_area.min.y - INITIAL_POSITION.y) + 1
+    vx_max = target_area.max.x - INITIAL_POSITION.x
+    vy_max_absolute = abs(target_area.min.y - INITIAL_POSITION.y)
 
     # Use trial-and-error to figure out the minimum x velocity needed in order
     # to overcome drag and just reach the leftmost edge of the target area.
     vx_min: int | None = None
-    for vx in range(vx_max + 1):
-        x = INITIAL_POSITION.x
+    for trial_vx_min in range(vx_max + 1):
+        x, vx = INITIAL_POSITION.x, trial_vx_min
         while vx > 0:
             x += vx
             vx += compute_drag_in_x(Vector(vx, 0)).x
         if x >= target_area.min.x:
-            vx_min = vx
+            vx_min = trial_vx_min
             break
 
     assert vx_min is not None
@@ -165,7 +166,13 @@ def part_2(file: pathlib.Path) -> None:
     target_area_string = file.read_text(encoding='ascii')
     target_area = parse_target_area(target_area_string)
 
+    # In addition to the overall tally that we need, go ahead and also track
+    # lists of values to use for a plot later on.
     acceptable_initial_velocities_tally = 0
+    max_heights: list[int | float] = []
+    x_velocities: list[int] = []
+    y_velocities: list[int] = []
+
     velocity_bounds = decide_velocity_bounds(target_area)
     for vy in reversed(velocity_bounds.y_values):
         for vx in velocity_bounds.x_values:
@@ -175,8 +182,31 @@ def part_2(file: pathlib.Path) -> None:
             )
             if not trajectory_report.missed:
                 acceptable_initial_velocities_tally += 1
+                max_heights.append(trajectory_report.max_height)
+            else:
+                max_heights.append(float('nan'))
+            x_velocities.append(vx)
+            y_velocities.append(vy)
 
     print('part 2:', acceptable_initial_velocities_tally)
+
+    # Purely out of curiosity, let's make a nice 2D histogram to show max
+    # height as a color-mapped function of the initial vx and vy values.
+    plt.hist2d(
+        x_velocities, y_velocities,
+        bins=[len(velocity_bounds.x_values), len(velocity_bounds.y_values)],
+        range=[
+            [velocity_bounds.min.x - 0.5, velocity_bounds.max.x + 0.5],
+            [velocity_bounds.min.y - 0.5, velocity_bounds.max.y + 0.5],
+        ],
+        weights=max_heights,
+    )
+    plt.title(f'part 2 ({file.stem})')
+    plt.xlabel('initial x velocity')
+    plt.ylabel('initial y velocity')
+    plt.colorbar(label='max height')
+    plt.savefig('part_2.png')
+    plt.close()
 
 
 if __name__ == '__main__':

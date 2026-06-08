@@ -1,8 +1,7 @@
 from dataclasses import dataclass
 import pathlib
-import re
 import sys
-from typing import Any, Final, Self
+from typing import Final, Self
 
 
 @dataclass(frozen=True, slots=True)
@@ -12,12 +11,6 @@ class Vector:
 
     def __add__(self, other: Self) -> Self:
         return self.__class__(self.x + other.x, self.y + other.y)
-
-
-VECTOR_BOUNDS_REGEX: Final[re.Pattern[str]] = re.compile(
-    r'x=([0-9-]+)\.\.([0-9-]+), y=([0-9-]+)\.\.([0-9-]+)',
-    re.ASCII | re.MULTILINE,
-)
 
 
 @dataclass(init=False, frozen=True, match_args=False, slots=True)
@@ -32,13 +25,19 @@ class VectorBounds:
         object.__setattr__(self, 'max', max_vector)
 
     @classmethod
-    def parse(cls, target_area_string: str) -> Self:
-        match = VECTOR_BOUNDS_REGEX.search(target_area_string)
-        if not match:
-            raise ValueError('got invalid vector bounds string')
-        x1, x2 = int(match.group(1)), int(match.group(2))
-        y1, y2 = int(match.group(3)), int(match.group(4))
-        return cls(x1, x2, y1, y2)
+    def parse(cls, vector_bounds_string: str) -> Self:
+        x_piece, y_piece = vector_bounds_string.strip().split(', ')
+        x1, x2 = x_piece.removeprefix('x=').split('..')
+        y1, y2 = y_piece.removeprefix('y=').split('..')
+        return cls(int(x1), int(x2), int(y1), int(y2))
+
+    @property
+    def x_values(self) -> range:
+        return range(self.min.x, self.max.x + 1)
+
+    @property
+    def y_values(self) -> range:
+        return range(self.min.y, self.max.y + 1)
 
     def __contains__(self, point: Vector) -> bool:
         return (
@@ -47,103 +46,137 @@ class VectorBounds:
         )
 
 
-def decide_velocity_bounds(target_area: VectorBounds) -> VectorBounds:
-    # This function establishes very broad limits for the range of velocities
-    # we ought to consider. The general heuristic here is "don't try anything
-    # with such high velocity that it'll just skip past the target area in one
-    # step."
-    assert target_area.min.x >= 0
-    x_min = 0
-    x_max = target_area.max.x + 1
-    y_abs = max(abs(target_area.min.y), abs(target_area.max.y)) + 1
-    return VectorBounds(x_min, x_max, -y_abs, +y_abs)
+def parse_target_area(target_area_string: str) -> VectorBounds:
+    vector_bounds_string = (
+        target_area_string.strip().removeprefix('target area: ')
+    )
+    return VectorBounds.parse(vector_bounds_string)
 
 
-def drag_in_x(velocity: Vector) -> Vector:
-    if velocity.x > 0:
-        return Vector(-1, 0)
-    if velocity.x < 0:
-        return Vector(+1, 0)
-    return Vector(0, 0)
-
-
+INITIAL_POSITION: Final[Vector] = Vector(0, 0)
 GRAVITY: Final[Vector] = Vector(0, -1)
 
 
-POSITION: Final[str] = 'position'
-VELOCITY: Final[str] = 'velocity'
-STEP: Final[str] = 'step'
-MAX_HEIGHT: Final[str] = 'max_height'
-MISSED: Final[str] = 'missed'
+def compute_drag_in_x(velocity: Vector) -> Vector:
+    match velocity:
+        case Vector(vx, _) if vx > 0:
+            return Vector(-1, 0)
+        case Vector(vx, _) if vx < 0:
+            return Vector(+1, 0)
+        case Vector(0, _):
+            return Vector(0, 0)
+        case _:
+            raise RuntimeError('unreachable code')
+
+
+def decide_velocity_bounds(target_area: VectorBounds) -> VectorBounds:
+    # First, verify a few basic assumptions about where the target area is
+    # relative to the probe's starting position and how physics works.
+    assert INITIAL_POSITION.x < target_area.min.x  # Target is rightward
+    assert INITIAL_POSITION.y > target_area.max.y  # Target is downward
+    assert GRAVITY.x == 0 and GRAVITY.y < 0  # Gravity pulls downward
+    test_drag = compute_drag_in_x(velocity=Vector(+1, 0))
+    assert test_drag.x < 0  # Drag resists rightward motion
+    assert test_drag.y == 0  # Drag doesn't happen vertically
+
+    # Here we establish very broad limits for the range of velocities we ought
+    # to consider. The general heuristic here is "don't try anything with such
+    # high velocity that it'll just skip past the target area in one step."
+    vx_max = (target_area.max.x - INITIAL_POSITION.x) + 1
+    vy_max_absolute = abs(target_area.min.y - INITIAL_POSITION.y) + 1
+
+    # Use trial-and-error to figure out the minimum x velocity needed in order
+    # to overcome drag and just reach the leftmost edge of the target area.
+    vx_min: int | None = None
+    for vx in range(vx_max + 1):
+        x = INITIAL_POSITION.x
+        while vx > 0:
+            x += vx
+            vx += compute_drag_in_x(Vector(vx, 0)).x
+        if x >= target_area.min.x:
+            vx_min = vx
+            break
+
+    assert vx_min is not None
+    return VectorBounds(vx_min, vx_max, -vy_max_absolute, +vy_max_absolute)
+
+
+@dataclass(match_args=False, slots=True)
+class ProbeState:
+    step: int
+    position: Vector
+    max_height: int
+    velocity: Vector
+
+    def simulate_one_step(self) -> None:
+        self.step += 1
+        self.position += self.velocity
+        self.max_height = max(self.max_height, self.position.y)
+        self.velocity += GRAVITY + compute_drag_in_x(self.velocity)
+
+
+@dataclass(frozen=True, match_args=False, slots=True)
+class ProbeReport:
+    missed: bool
+    max_height: int
 
 
 def simulate_trajectory(
     initial_velocity: Vector, target_area: VectorBounds,
-) -> dict[str, Any]:
-    state = {
-        POSITION: Vector(0, 0),
-        VELOCITY: initial_velocity,
-        STEP: 0,
-        MAX_HEIGHT: 0,
-    }
-    finished = False
+) -> ProbeReport:
+    probe = ProbeState(
+        step=0,
+        position=INITIAL_POSITION,
+        max_height=INITIAL_POSITION.y,
+        velocity=initial_velocity,
+    )
 
-    while not finished:
+    while True:
+        probe.simulate_one_step()
 
-        state[STEP] += 1
-        state[POSITION] += state[VELOCITY]
-        state[MAX_HEIGHT] = max(state[MAX_HEIGHT], state[POSITION].y)
-        state[VELOCITY] += GRAVITY + drag_in_x(state[VELOCITY])
-
-        if state[POSITION] in target_area:
-            state[MISSED] = False
-            finished = True
-        elif (
-            state[POSITION].x > target_area.max.x
-            or state[POSITION].y < target_area.min.y
+        if probe.position in target_area:
+            return ProbeReport(missed=False, max_height=probe.max_height)
+        if (
+            probe.position.x > target_area.max.x
+            or probe.position.y < target_area.min.y
         ):
-            state[MISSED] = True
-            finished = True
-
-    return state
+            return ProbeReport(missed=True, max_height=probe.max_height)
 
 
 def part_1(file: pathlib.Path) -> None:
     target_area_string = file.read_text(encoding='ascii')
-    target_area = VectorBounds.parse(target_area_string)
+    target_area = parse_target_area(target_area_string)
 
     velocity_bounds = decide_velocity_bounds(target_area)
-    for vy in range(velocity_bounds.max.y, velocity_bounds.min.y - 1, -1):
-        for vx in range(velocity_bounds.min.x, velocity_bounds.max.x + 1):
+    for vy in reversed(velocity_bounds.y_values):
+        for vx in velocity_bounds.x_values:
 
-            initial_velocity = Vector(vx, vy)
             trajectory_report = simulate_trajectory(
-                initial_velocity, target_area,
+                initial_velocity=Vector(vx, vy), target_area=target_area,
             )
-            if not trajectory_report[MISSED]:
-                print('part 1:', trajectory_report[MAX_HEIGHT])
+            if not trajectory_report.missed:
+                print('part 1:', trajectory_report.max_height)
                 return
 
-    raise RuntimeError('failed to find any best height')
+    raise RuntimeError('part 1 loop failed to find any max height')
 
 
 def part_2(file: pathlib.Path) -> None:
     target_area_string = file.read_text(encoding='ascii')
-    target_area = VectorBounds.parse(target_area_string)
+    target_area = parse_target_area(target_area_string)
 
-    velocities_tally = 0
+    acceptable_initial_velocities_tally = 0
     velocity_bounds = decide_velocity_bounds(target_area)
-    for vy in range(velocity_bounds.max.y, velocity_bounds.min.y - 1, -1):
-        for vx in range(velocity_bounds.min.x, velocity_bounds.max.x + 1):
+    for vy in reversed(velocity_bounds.y_values):
+        for vx in velocity_bounds.x_values:
 
-            initial_velocity = Vector(vx, vy)
             trajectory_report = simulate_trajectory(
-                initial_velocity, target_area,
+                initial_velocity=Vector(vx, vy), target_area=target_area,
             )
-            if not trajectory_report[MISSED]:
-                velocities_tally += 1
+            if not trajectory_report.missed:
+                acceptable_initial_velocities_tally += 1
 
-    print('part 2:', velocities_tally)
+    print('part 2:', acceptable_initial_velocities_tally)
 
 
 if __name__ == '__main__':

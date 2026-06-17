@@ -1,12 +1,13 @@
 from collections.abc import Iterator
+from dataclasses import dataclass
 from enum import Enum
 import functools
 import pathlib
 import sys
-from typing import Final, NamedTuple, Self
+from typing import Final, Self
 
 
-def modulo_from_1(numerator: int, denominator: int) -> int:
+def modulo_base_1(numerator: int, denominator: int) -> int:
     # Just like modulo, but return a value from the set {1, ..., denominator}
     # instead of from the set {0, ..., denominator-1}.
     return (numerator - 1) % denominator + 1
@@ -17,8 +18,53 @@ class Player(Enum):
     TWO = 2
 
     def get_opponent(self) -> Self:
-        value = modulo_from_1(self.value + 1, len(self.__class__))
+        value = modulo_base_1(self.value + 1, len(self.__class__))
         return self.__class__(value)
+
+
+@dataclass(frozen=True, match_args=False, kw_only=True, slots=True)
+class PlayerMapping[T]:
+    player_1: T
+    player_2: T
+
+    @classmethod
+    def from_dict(cls, player_dict: dict[Player, T]) -> Self:
+        if frozenset(player_dict.keys()) != frozenset(Player):
+            raise TypeError('invalid dict keyset for player mapping')
+        return cls(
+            player_1=player_dict[Player.ONE],
+            player_2=player_dict[Player.TWO],
+        )
+
+    def __getitem__(self, player: Player) -> T:
+        match player:
+            case Player.ONE:
+                return self.player_1
+            case Player.TWO:
+                return self.player_2
+            case _:
+                raise KeyError(player)
+
+    def but_with(self, player: Player, new_value: T) -> Self:
+        match player:
+            case Player.ONE:
+                return self.__class__(
+                    player_1=new_value, player_2=self.player_2,
+                )
+            case Player.TWO:
+                return self.__class__(
+                    player_1=self.player_1, player_2=new_value,
+                )
+            case _:
+                raise KeyError(player)
+
+    def items(self) -> Iterator[tuple[Player, T]]:
+        yield Player.ONE, self.player_1
+        yield Player.TWO, self.player_2
+
+    def values(self) -> Iterator[T]:
+        yield self.player_1
+        yield self.player_2
 
 
 class Space(Enum):
@@ -34,11 +80,11 @@ class Space(Enum):
     SPACE_10 = 10
 
     def advance_by(self, number: int) -> Self:
-        value = modulo_from_1(self.value + number, len(self.__class__))
+        value = modulo_base_1(self.value + number, len(self.__class__))
         return self.__class__(value)
 
 
-def parse_starting_spaces(starting_spaces: str) -> dict[Player, Space]:
+def parse_starting_spaces(starting_spaces: str) -> PlayerMapping[Space]:
     position: dict[Player, Space] = {}
 
     for line in starting_spaces.strip().split('\n'):
@@ -51,7 +97,7 @@ def parse_starting_spaces(starting_spaces: str) -> dict[Player, Space]:
             raise ValueError('duplicate player line detected in input file')
         position[player] = space
 
-    return position
+    return PlayerMapping.from_dict(position)
 
 
 DETERMINISTIC_DIE_MAX: Final[int] = 100
@@ -65,16 +111,13 @@ class DeterministicDie:
         self.next_value: int = 1
         self.times_rolled: int = 0
 
-    def roll(self) -> int:
+    def __next__(self) -> int:
         value = self.next_value
-        self.next_value = modulo_from_1(
+        self.next_value = modulo_base_1(
             self.next_value + 1, DETERMINISTIC_DIE_MAX,
         )
         self.times_rolled += 1
         return value
-
-    def __next__(self) -> int:
-        return self.roll()
 
     def __iter__(self) -> Iterator[int]:
         return self
@@ -83,26 +126,23 @@ class DeterministicDie:
 WINNING_SCORE: Final[int] = 1_000
 
 
+@dataclass(frozen=True, match_args=False, kw_only=True, slots=True)
 class GameState:
+    position: PlayerMapping[Space]
+    score: PlayerMapping[int] = PlayerMapping(player_1=0, player_2=0)
+    up_next: Player = Player.ONE
 
-    __slots__ = ('position', 'score', 'up_next')
-
-    def __init__(self) -> None:
-        self.position: dict[Player, Space] = {
-            Player.ONE: Space(1), Player.TWO: Space(1),
-        }
-        self.score: dict[Player, int] = {Player.ONE: 0, Player.TWO: 0}
-        self.up_next: Player = Player.ONE
-
-    def set_position(self, position: dict[Player, Space]) -> None:
-        for player, space in position.items():
-            self.position[player] = space
-
-    def take_turn(self, die: Iterator[int]) -> None:
-        player, self.up_next = self.up_next, self.up_next.get_opponent()
+    def take_turn(self, die: Iterator[int]) -> Self:
+        player = self.up_next
         roll = next(die) + next(die) + next(die)
-        self.position[player] = self.position[player].advance_by(roll)
-        self.score[player] += self.position[player].value
+        new_position = self.position[player].advance_by(roll)
+        new_score = self.score[player] + self.position[player].value
+
+        return self.__class__(
+            position=self.position.but_with(player, new_position),
+            score=self.score.but_with(player, new_score),
+            up_next=player.get_opponent(),
+        )
 
     def get_winner(self) -> Player | None:
         for player, score in self.score.items():
@@ -118,11 +158,11 @@ class GameState:
 def part_1(file: pathlib.Path) -> None:
     starting_spaces = file.read_text(encoding='ascii')
     start_position = parse_starting_spaces(starting_spaces)
-    die, game = DeterministicDie(), GameState()
 
-    game.set_position(start_position)
+    die = DeterministicDie()
+    game = GameState(position=start_position)
     while game.get_winner() is None:
-        game.take_turn(die)
+        game = game.take_turn(die)
 
     loser = game.get_loser()
     assert loser is not None
@@ -130,87 +170,44 @@ def part_1(file: pathlib.Path) -> None:
     print('part 1:', answer)
 
 
-class FrozenUniverseState(NamedTuple):
-    player_1_position: Space
-    player_2_position: Space
-    player_1_score: int
-    player_2_score: int
-    current_player: Player
-    rolls_remaining: int
-    roll_total: int
-
-
 DIRAC_DIE_VALUES: Final[tuple[int, ...]] = (1, 2, 3)
 
 DIRAC_WINNING_SCORE: Final[int] = 21
 
 
+@dataclass(frozen=True, match_args=False, kw_only=True, slots=True)
 class UniverseState:
+    position: PlayerMapping[Space]
+    score: PlayerMapping[int] = PlayerMapping(player_1=0, player_2=0)
+    current_player: Player = Player.ONE
+    rolls_remaining: int = 3
+    roll_total: int = 0
 
-    __slots__ = (
-        'position', 'score', 'current_player', 'rolls_remaining', 'roll_total',
-    )
-
-    def __init__(self) -> None:
-        self.position: dict[Player, Space] = {
-            Player.ONE: Space(1), Player.TWO: Space(1),
-        }
-        self.score: dict[Player, int] = {Player.ONE: 0, Player.TWO: 0}
-        self.current_player: Player = Player.ONE
-        self.rolls_remaining = 3
-        self.roll_total = 0
-
-    def set_position(self, position: dict[Player, Space]) -> None:
-        for player, space in position.items():
-            self.position[player] = space
-
-    def freeze(self) -> FrozenUniverseState:
-        return FrozenUniverseState(
-            player_1_position=self.position[Player.ONE],
-            player_2_position=self.position[Player.TWO],
-            player_1_score=self.score[Player.ONE],
-            player_2_score=self.score[Player.TWO],
-            current_player=self.current_player,
-            rolls_remaining=self.rolls_remaining,
-            roll_total=self.roll_total,
-        )
-
-    def set_from_frozen(self, frozen: FrozenUniverseState) -> None:
-        self.position[Player.ONE] = frozen.player_1_position
-        self.position[Player.TWO] = frozen.player_2_position
-        self.score[Player.ONE] = frozen.player_1_score
-        self.score[Player.TWO] = frozen.player_2_score
-        self.current_player = frozen.current_player
-        self.rolls_remaining = frozen.rolls_remaining
-        self.roll_total = frozen.roll_total
-
-    def roll_dirac_die(self) -> list[FrozenUniverseState]:
-        universes: list[FrozenUniverseState] = []
+    def roll_dirac_die(self) -> Iterator[Self]:
         player = self.current_player
-        self.rolls_remaining -= 1
+        new_rolls_remaining = self.rolls_remaining - 1
+
         for roll in DIRAC_DIE_VALUES:
-            self.roll_total += roll
-            saved_roll_total = self.roll_total
-            if self.rolls_remaining == 0:
-                self.position[player] = (
-                    self.position[player].advance_by(self.roll_total)
+            new_roll_total = self.roll_total + roll
+
+            if new_rolls_remaining > 0:
+                yield self.__class__(
+                    position=self.position,
+                    score=self.score,
+                    current_player=self.current_player,
+                    rolls_remaining=new_rolls_remaining,
+                    roll_total=new_roll_total,
                 )
-                self.score[player] += self.position[player].value
-                self.current_player = player.get_opponent()
-                self.rolls_remaining = 3
-                self.roll_total = 0
-            universes.append(self.freeze())
-            if self.rolls_remaining == 3:
-                self.roll_total = saved_roll_total
-                self.rolls_remaining = 0
-                self.current_player = player
-                self.score[player] -= self.position[player].value
-                self.position[player] = (
-                    self.position[player].advance_by(-self.roll_total)
+
+            else:  # rolls_remaining == 0
+                old_position = self.position[player]
+                new_position = old_position.advance_by(new_roll_total)
+                new_score = self.score[player] + new_position.value
+                yield self.__class__(
+                    position=self.position.but_with(player, new_position),
+                    score=self.score.but_with(player, new_score),
+                    current_player=player.get_opponent(),
                 )
-            self.roll_total -= roll
-        self.rolls_remaining += 1
-        return universes
 
     def get_winner(self) -> Player | None:
         for player, score in self.score.items():
@@ -219,43 +216,32 @@ class UniverseState:
         return None
 
 
-class UniverseTally(NamedTuple):
-    player_1_wins: int
-    player_2_wins: int
-
-
 @functools.cache
-def compute_universe_tally(state: FrozenUniverseState) -> UniverseTally:
-    universe = UniverseState()
-    universe.set_from_frozen(state)
-    match universe.get_winner():
-        case Player.ONE:
-            return UniverseTally(player_1_wins=1, player_2_wins=0)
-        case Player.TWO:
-            return UniverseTally(player_1_wins=0, player_2_wins=1)
-        case _:
-            pass
+def compute_universe_tally(universe: UniverseState) -> PlayerMapping[int]:
+    winner = universe.get_winner()
+    if winner is not None:
+        return PlayerMapping(player_1=0, player_2=0).but_with(winner, 1)
+
+    running_tally = PlayerMapping(player_1=0, player_2=0)
     futures = universe.roll_dirac_die()
-    future_tallies = [compute_universe_tally(future) for future in futures]
-    return UniverseTally(
-        player_1_wins=sum(
-            future_tally.player_1_wins for future_tally in future_tallies
-        ),
-        player_2_wins=sum(
-            future_tally.player_2_wins for future_tally in future_tallies
-        ),
-    )
+    for future_tally in map(compute_universe_tally, futures):
+        running_tally = PlayerMapping(
+            player_1=running_tally.player_1 + future_tally.player_1,
+            player_2=running_tally.player_2 + future_tally.player_2,
+        )
+
+    return running_tally
 
 
 def part_2(file: pathlib.Path) -> None:
     starting_spaces = file.read_text(encoding='ascii')
     start_position = parse_starting_spaces(starting_spaces)
-    universe = UniverseState()
 
-    universe.set_position(start_position)
-    tally = compute_universe_tally(universe.freeze())
+    universe = UniverseState(position=start_position)
+    tally = compute_universe_tally(universe)
+    most_universes = max(tally.values())
 
-    print('part 2:', max(tally))
+    print('part 2:', most_universes)
 
 
 if __name__ == '__main__':

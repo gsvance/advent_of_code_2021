@@ -1,13 +1,13 @@
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 import heapq
 import pathlib
 import sys
 from typing import Final, Self
 
 
-@dataclass(frozen=True, match_args=False, slots=True)
+@dataclass(order=True, frozen=True, match_args=False, slots=True)
 class Point:
     r: int
     c: int
@@ -27,7 +27,7 @@ class Point:
         return cls(r, c)
 
 
-class AmphipodType(Enum):
+class AmphipodType(StrEnum):
     AMBER = 'A'
     BRONZE = 'B'
     COPPER = 'C'
@@ -42,16 +42,22 @@ class AmphipodType(Enum):
         return cls(binary.decode('ascii'))
 
 
-@dataclass(frozen=True, match_args=False, slots=True)
+@dataclass(init=False, repr=False, frozen=True, match_args=False, slots=True)
 class Hallway:
-    points: frozenset[Point]
-    doorways: frozenset[Point]
+    points: tuple[Point, ...]
+    doorways: tuple[Point, ...]
 
-    def __post_init__(self) -> None:
+    def __init__(
+        self, points: Iterable[Point], doorways: Iterable[Point],
+    ) -> None:
+        sorted_points = sorted(points)
+        sorted_doorways = sorted(doorways)
+        object.__setattr__(self, 'points', tuple(sorted_points))
+        object.__setattr__(self, 'doorways', tuple(sorted_doorways))
         r_values = {point.r for point in self.points}
         if len(r_values) != 1:
             raise ValueError(f'hallway has multiple r values: {r_values!r}')
-        if not self.doorways < self.points:
+        if not set(self.doorways) < set(self.points):
             raise ValueError('doorways are not a subset of the hallway')
 
     def __contains__(self, point: Point) -> bool:
@@ -59,14 +65,16 @@ class Hallway:
 
     @property
     def r(self) -> int:
-        return next(iter(self.points)).r
+        return self.points[0].r
 
 
-@dataclass(frozen=True, match_args=False, slots=True)
+@dataclass(init=False, frozen=True, match_args=False, slots=True)
 class Room:
-    points: frozenset[Point]
+    points: tuple[Point, ...]
 
-    def __post_init__(self) -> None:
+    def __init__(self, points: Iterable[Point]) -> None:
+        sorted_points = sorted(points)
+        object.__setattr__(self, 'points', tuple(sorted_points))
         c_values = {point.c for point in self.points}
         if len(c_values) != 1:
             raise ValueError(f'room has multiple c values: {c_values!r}')
@@ -79,75 +87,85 @@ class Room:
 
     @property
     def c(self) -> int:
-        return next(iter(self.points)).c
+        return self.points[0].c
 
 
-AMPHIPOD_TILES: Final[frozenset[str]] = frozenset(
+AMPHIPOD_TILES: Final[tuple[str, ...]] = tuple(sorted(
     amphipod_type.value for amphipod_type in AmphipodType
-)
+))
 
 WALL: Final[str] = '#'
 OPEN: Final[str] = '.'
 
 
-@dataclass(repr=False, frozen=True, match_args=False, slots=True)
+@dataclass(init=False, repr=False, frozen=True, match_args=False, slots=True)
 class Burrow:
-    spaces: frozenset[Point]
+    spaces: tuple[Point, ...]
     hallway: Hallway
     rooms: tuple[tuple[AmphipodType, Room], ...]
 
+    def __init__(
+        self,
+        spaces: Iterable[Point],
+        hallway: Hallway,
+        rooms: Iterable[tuple[AmphipodType, Room]],
+    ) -> None:
+        sorted_spaces = sorted(spaces)
+        sorted_rooms = sorted(rooms, key=lambda x: x[0])
+        object.__setattr__(self, 'spaces', tuple(sorted_spaces))
+        object.__setattr__(self, 'hallway', hallway)
+        object.__setattr__(self, 'rooms', tuple(sorted_rooms))
+
     @classmethod
     def parse(cls, situation_diagram: str) -> Self:
-        hallway_points: set[Point] = set()
-        room_points: set[Point] = set()
+        hallway_points: list[Point] = []
+        room_points: list[Point] = []
 
         for r, line in enumerate(situation_diagram.split('\n')):
             for c, tile in enumerate(line):
                 if tile == OPEN:
-                    hallway_points.add(Point(r, c))
+                    hallway_points.append(Point(r, c))
                 elif tile in AMPHIPOD_TILES:
-                    room_points.add(Point(r, c))
+                    room_points.append(Point(r, c))
                 # Ignore wall tiles and any other characters (like spaces)
 
-        not_wall_points = hallway_points | room_points
-        doorway_points = {
+        not_wall_points = hallway_points + room_points
+        doorway_points = [
             point for point in hallway_points
             if point.shift_by(dr=+1) in room_points
-        }
+        ]
 
-        room_columns: dict[int, set[Point]] = {}
+        room_columns: dict[int, list[Point]] = {}
         for point in room_points:
             if point.c in room_columns:
-                room_columns[point.c].add(point)
+                room_columns[point.c].append(point)
             else:
-                room_columns[point.c] = {point}
+                room_columns[point.c] = [point]
 
         labeled_rooms: list[tuple[AmphipodType, Room]] = []
         pairings = zip(sorted(AMPHIPOD_TILES), sorted(room_columns.keys()))
         for tile, c in pairings:
             amphipod_type = AmphipodType(tile)
-            room = Room(frozenset(room_columns[c]))
+            room = Room(room_columns[c])
             labeled_rooms.append((amphipod_type, room))
 
         return cls(
-            spaces=frozenset(not_wall_points),
-            hallway=Hallway(
-                frozenset(hallway_points), frozenset(doorway_points),
-            ),
-            rooms=tuple(labeled_rooms),
+            spaces=not_wall_points,
+            hallway=Hallway(hallway_points, doorway_points),
+            rooms=labeled_rooms,
         )
 
     def get(self, point: Point) -> str:
         return OPEN if point in self.spaces else WALL
 
-    def destination_room(self, amphipod_type: AmphipodType) -> Room:
+    def get_destination_room(self, amphipod_type: AmphipodType) -> Room:
         for room_amphipod_type, room in self.rooms:
             if room_amphipod_type == amphipod_type:
                 return room
         raise RuntimeError('unreachable code')
 
 
-@dataclass(frozen=True, match_args=False, slots=True)
+@dataclass(order=True, frozen=True, match_args=False, slots=True)
 class Amphipod:
     type: AmphipodType
     position: Point
@@ -164,20 +182,24 @@ class Amphipod:
         )
 
 
-@dataclass(frozen=True, match_args=False, slots=True)
+@dataclass(init=False, frozen=True, match_args=False, slots=True)
 class Amphipods:
-    amphipods: frozenset[Amphipod]
+    amphipods: tuple[Amphipod, ...]
+
+    def __init__(self, amphipods: Iterable[Amphipod]) -> None:
+        sorted_amphipods = sorted(amphipods)
+        object.__setattr__(self, 'amphipods', tuple(sorted_amphipods))
 
     @classmethod
     def parse(cls, situation_diagram: str) -> Self:
-        amphipods: set[Amphipod] = set()
+        amphipods: list[Amphipod] = []
         for r, line in enumerate(situation_diagram.split('\n')):
             for c, tile in enumerate(line):
                 if tile not in AMPHIPOD_TILES:
                     continue
                 amphipod = Amphipod(AmphipodType(tile), Point(r, c))
-                amphipods.add(amphipod)
-        return cls(frozenset(amphipods))
+                amphipods.append(amphipod)
+        return cls(amphipods)
 
     def __contains__(self, amphipod: Amphipod) -> bool:
         return amphipod in self.amphipods
@@ -192,26 +214,23 @@ class Amphipods:
         return None
 
     def reposition(self, amphipod: Amphipod, new_position: Point) -> Self:
-        new_amphipods = set(self.amphipods)
-        new_amphipods.remove(amphipod)
-        new_amphipods.add(Amphipod(amphipod.type, new_position))
-        return self.__class__(frozenset(new_amphipods))
+        new_amphipods = [
+            old_amphipod for old_amphipod in self.amphipods
+            if old_amphipod != amphipod
+        ]
+        new_amphipods.append(Amphipod(amphipod.type, new_position))
+        return self.__class__(new_amphipods)
 
     def to_binary(self) -> bytes:
-        amphipods_binary = [
-            amphipod.to_binary() for amphipod in self.amphipods
-        ]
-        amphipods_binary.sort()
-        return b''.join(amphipods_binary)
+        return b''.join(amphipod.to_binary() for amphipod in self.amphipods)
 
     @classmethod
     def from_binary(cls, binary: bytes) -> Self:
-        assert len(binary) % 2 == 0
-        amphipods: set[Amphipod] = set()
+        amphipods: list[Amphipod] = []
         for i in range(0, len(binary), 2):
             amphipod = Amphipod.from_binary(binary[i:i+2])
-            amphipods.add(amphipod)
-        return cls(frozenset(amphipods))
+            amphipods.append(amphipod)
+        return cls(amphipods)
 
 
 def parse_situation_diagram(
@@ -271,7 +290,7 @@ STEP_ENERGY_COST: Final[dict[AmphipodType, int]] = {
 def compute_energy_bound(burrow: Burrow, amphipods: Amphipods) -> int:
     energy_lower_bound = 0
     for amphipod in amphipods:
-        destination_room = burrow.destination_room(amphipod.type)
+        destination_room = burrow.get_destination_room(amphipod.type)
         if amphipod.position in destination_room:
             continue
         minimum_steps = (
@@ -291,156 +310,121 @@ def is_fully_organized(burrow: Burrow, amphipods: Amphipods) -> bool:
     return True
 
 
+def destination_room_is_available(
+    burrow: Burrow, amphipods: Amphipods, amphipod_type: AmphipodType,
+) -> bool:
+    destination_room = burrow.get_destination_room(amphipod_type)
+    for amphipod in amphipods:
+        if (
+            amphipod.position in destination_room
+            and amphipod.type != amphipod_type
+        ):
+            return False
+    return True
+
+
 @dataclass(frozen=True, match_args=False, slots=True)
 class Move:
     amphipods: Amphipods
     energy: int
 
 
-def get_single_amphipod_moves(
+def compute_moves_into_hallway(
     burrow: Burrow, amphipods: Amphipods, amphipod: Amphipod,
-) -> frozenset[Move]:
-    destination_room = burrow.destination_room(amphipod.type)
-
-    # When the amphipod is in its destination room, the choice of move depends
-    # on whether there is another amphipod below it that needs to escape
-    if amphipod.position in destination_room:
-        amphipod_below_needs_to_escape = False
-        point_below = amphipod.position.shift_by(dr=+1)
-        while burrow.get(point_below) != WALL:
-            amphipod_below = amphipods.get(point_below)
-            if (
-                amphipod_below is not None
-                and amphipod_below.type != amphipod.type
-            ):
-                amphipod_below_needs_to_escape = True
-                break
-            point_below = point_below.shift_by(dr=+1)
-
-        # When an amphipod below needs to escape, we should try to move upward
-        # or into the hallway to get out of the way
-        if amphipod_below_needs_to_escape:
-            point_above = amphipod.position.shift_by(dr=-1)
-            if point_above in burrow.hallway.doorways:
-                hallway_moves: set[Move] = set()
-                point_leftward = point_above.shift_by(dc=-1)
-                while (
-                    burrow.get(point_leftward) != WALL
-                    and amphipods.get(point_leftward) is None
-                ):
-                    if point_leftward not in burrow.hallway.doorways:
-                        steps = 1 + abs(point_above.c - point_leftward.c)
-                        hallway_moves.add(Move(
-                            amphipods.reposition(amphipod, point_leftward),
-                            STEP_ENERGY_COST[amphipod.type] * steps,
-                        ))
-                    point_leftward = point_leftward.shift_by(dc=-1)
-                point_rightward = point_above.shift_by(dc=+1)
-                while (
-                    burrow.get(point_rightward) != WALL
-                    and amphipods.get(point_rightward) is None
-                ):
-                    if point_rightward not in burrow.hallway.doorways:
-                        steps = 1 + abs(point_above.c - point_rightward.c)
-                        hallway_moves.add(Move(
-                            amphipods.reposition(amphipod, point_rightward),
-                            STEP_ENERGY_COST[amphipod.type] * steps,
-                        ))
-                    point_rightward = point_rightward.shift_by(dc=+1)
-                return frozenset(hallway_moves)
-            if amphipods.get(point_above) is None:
-                return frozenset([Move(
-                    amphipods.reposition(amphipod, point_above),
-                    STEP_ENERGY_COST[amphipod.type] * 1,
-                )])
-            return frozenset()
-
-        # Otherwise, just move downward whenever possible to make space for
-        # other amphipods entering this room
-        point_below = amphipod.position.shift_by(dr=+1)
-        if (
-            burrow.get(point_below) != WALL
-            and amphipods.get(point_below) is None
-        ):
-            return frozenset([Move(
-                amphipods.reposition(amphipod, point_below),
-                STEP_ENERGY_COST[amphipod.type] * 1,
-            )])
-        return frozenset()
-
-    # When the amphipod is stopped in the hallway, the only possibility is to
-    # check whether it can move into its destination room
-    if amphipod.position in burrow.hallway:
-        entry_point = Point(burrow.hallway.r + 1, destination_room.c)
-        delta_c = entry_point.c - amphipod.position.c
-        sign = +1 if delta_c >= 0 else -1
-        for dc in range(sign, delta_c + sign, sign):
-            if amphipods.get(amphipod.position.shift_by(dc=dc)) is not None:
-                return frozenset()
-        if amphipods.get(entry_point) is not None:
-            return frozenset()
-        for room_point in destination_room:
-            if room_point == entry_point:
-                continue
-            amphipod_in_room = amphipods.get(room_point)
-            if (
-                amphipod_in_room is not None
-                and amphipod_in_room.type != amphipod.type
-            ):
-                return frozenset()
-        steps = 1 + abs(amphipod.position.c - entry_point.c)
-        return frozenset([Move(
-            amphipods.reposition(amphipod, entry_point),
-            STEP_ENERGY_COST[amphipod.type] * steps,
-        )])
-
-    # Otherwise, the amphipod is in the wrong room and needs to either move
-    # upwards or move into the hallway
+) -> list[Move]:
     point_above = amphipod.position.shift_by(dr=-1)
-    if point_above not in burrow.hallway.doorways:
-        if amphipods.get(point_above) is None:
-            return frozenset([Move(
-                amphipods.reposition(amphipod, point_above),
-                STEP_ENERGY_COST[amphipod.type] * 1,
-            )])
-        return frozenset()
-    hallway_moves: set[Move] = set()
+    while point_above not in burrow.hallway.doorways:
+        if amphipods.get(point_above) is not None:
+            return []
+        point_above = point_above.shift_by(dr=-1)
+
+    upward_steps = abs(point_above.r - amphipod.position.r)
+    hallway_moves: list[Move] = []
+
     point_leftward = point_above.shift_by(dc=-1)
     while (
         burrow.get(point_leftward) != WALL
         and amphipods.get(point_leftward) is None
     ):
         if point_leftward not in burrow.hallway.doorways:
-            steps = 1 + abs(point_above.c - point_leftward.c)
-            hallway_moves.add(Move(
+            steps = upward_steps + abs(point_above.c - point_leftward.c)
+            hallway_moves.append(Move(
                 amphipods.reposition(amphipod, point_leftward),
                 STEP_ENERGY_COST[amphipod.type] * steps,
             ))
         point_leftward = point_leftward.shift_by(dc=-1)
+
     point_rightward = point_above.shift_by(dc=+1)
     while (
         burrow.get(point_rightward) != WALL
         and amphipods.get(point_rightward) is None
     ):
         if point_rightward not in burrow.hallway.doorways:
-            steps = 1 + abs(point_above.c - point_rightward.c)
-            hallway_moves.add(Move(
+            steps = upward_steps + abs(point_above.c - point_rightward.c)
+            hallway_moves.append(Move(
                 amphipods.reposition(amphipod, point_rightward),
                 STEP_ENERGY_COST[amphipod.type] * steps,
             ))
         point_rightward = point_rightward.shift_by(dc=+1)
-    return frozenset(hallway_moves)
+
+    return hallway_moves
+
+
+def compute_destination_room_move(
+    burrow: Burrow, amphipods: Amphipods, amphipod: Amphipod,
+) -> list[Move]:
+    if not destination_room_is_available(burrow, amphipods, amphipod.type):
+        return []
+
+    doorway = Point(
+        burrow.hallway.r, burrow.get_destination_room(amphipod.type).c
+    )
+    rightward_steps = doorway.c - amphipod.position.c
+    sign = +1 if rightward_steps >= 0 else -1
+
+    for dc in range(sign, rightward_steps + sign, sign):
+        if amphipods.get(amphipod.position.shift_by(dc=dc)) is not None:
+            return []
+
+    destination_point = doorway
+    while True:
+        point_below = destination_point.shift_by(dr=+1)
+        if (
+            burrow.get(point_below) != WALL
+            and amphipods.get(point_below) is None
+        ):
+            destination_point = point_below
+        else:
+            break
+
+    steps = abs(rightward_steps) + abs(doorway.r - destination_point.r)
+    return [Move(
+        amphipods.reposition(amphipod, destination_point),
+        STEP_ENERGY_COST[amphipod.type] * steps,
+    )]
+
+
+def find_single_amphipod_moves(
+    burrow: Burrow, amphipods: Amphipods, amphipod: Amphipod,
+) -> list[Move]:
+    if amphipod.position in burrow.hallway:
+        return compute_destination_room_move(burrow, amphipods, amphipod)
+    if amphipod.position not in burrow.get_destination_room(amphipod.type):
+        return compute_moves_into_hallway(burrow, amphipods, amphipod)
+    if not destination_room_is_available(burrow, amphipods, amphipod.type):
+        return compute_moves_into_hallway(burrow, amphipods, amphipod)
+    return []
 
 
 def find_possible_next_moves(
     burrow: Burrow, amphipods: Amphipods,
-) -> frozenset[Move]:
-    possible_next_moves: set[Move] = set()
+) -> list[Move]:
+    possible_next_moves: list[Move] = []
     for amphipod in amphipods:
-        possible_next_moves.update(
-            get_single_amphipod_moves(burrow, amphipods, amphipod),
+        possible_next_moves.extend(
+            find_single_amphipod_moves(burrow, amphipods, amphipod),
         )
-    return frozenset(possible_next_moves)
+    return possible_next_moves
 
 
 HUGE: Final[int] = 2 ** 63 - 1

@@ -1,10 +1,17 @@
 from abc import ABC, abstractmethod
 from collections import deque
-from collections.abc import Iterator
+from enum import Enum
 from dataclasses import dataclass, fields
 import pathlib
 import sys
-from typing import Final
+from typing import Final, Self
+
+
+class ALUStatus(Enum):
+    NOT_STARTED = 0
+    RUNNING = 1
+    AWAITING_INPUT = 2
+    FINISHED = 3
 
 
 @dataclass(match_args=False, slots=True)
@@ -13,16 +20,36 @@ class ALUState:
     x: int = 0
     y: int = 0
     z: int = 0
+    ip: int = 0  # Instruction pointer
+    st: ALUStatus = ALUStatus.NOT_STARTED
 
     def get(self, name: str) -> int:
-        return getattr(self, name)
+        match name:
+            case 'w': return self.w
+            case 'x': return self.x
+            case 'y': return self.y
+            case 'z': return self.z
+            case _:
+                raise AssertionError('supposed to be unreachable')
 
     def set(self, name: str, value: int) -> None:
-        setattr(self, name, value)
+        match name:
+            case 'w': self.w = value
+            case 'x': self.x = value
+            case 'y': self.y = value
+            case 'z': self.z = value
+            case _:
+                raise AssertionError('supposed to be unreachable')
+
+    def copy(self) -> Self:
+        return self.__class__(
+            w=self.w, x=self.x, y=self.y, z=self.z, ip=self.ip, st=self.st,
+        )
 
 
 VARIABLE_NAMES: Final[frozenset[str]] = frozenset(
-    field.name for field in fields(ALUState)
+    dataclass_field.name for dataclass_field in fields(ALUState)
+    if len(dataclass_field.name) == 1
 )
 
 
@@ -76,7 +103,13 @@ class Input(Instruction):
         del self.b
 
     def execute(self, state: ALUState, inputs: deque[int]) -> None:
-        state.set(self.a, inputs.popleft())
+        if len(inputs) > 0:
+            state.set(self.a, inputs.popleft())
+            state.ip += 1
+            state.st = ALUStatus.RUNNING
+        else:
+            state.ip += 0
+            state.st = ALUStatus.AWAITING_INPUT
 
 
 class Add(Instruction):
@@ -86,6 +119,8 @@ class Add(Instruction):
     def execute(self, state: ALUState, inputs: deque[int]) -> None:
         a, b = self.fetch_a_and_b(state)
         state.set(self.a, a + b)
+        state.ip += 1
+        state.st = ALUStatus.RUNNING
 
 
 class Multiply(Instruction):
@@ -95,6 +130,8 @@ class Multiply(Instruction):
     def execute(self, state: ALUState, inputs: deque[int]) -> None:
         a, b = self.fetch_a_and_b(state)
         state.set(self.a, a * b)
+        state.ip += 1
+        state.st = ALUStatus.RUNNING
 
 
 class Divide(Instruction):
@@ -104,13 +141,17 @@ class Divide(Instruction):
     def execute(self, state: ALUState, inputs: deque[int]) -> None:
         a, b = self.fetch_a_and_b(state)
         if b == 0:
-            raise RuntimeError('attempting to execute div with b=0')
+            raise RuntimeError(
+                'attempting to execute div instruction with b = 0'
+            )
         if b < 0:
             a, b = -a, -b
         if a >= 0:
             state.set(self.a, a // b)
         else:
-            state.set(self.a, -(-a // b))
+            state.set(self.a, -(abs(a) // b))
+        state.ip += 1
+        state.st = ALUStatus.RUNNING
 
 
 class Modulo(Instruction):
@@ -119,9 +160,17 @@ class Modulo(Instruction):
 
     def execute(self, state: ALUState, inputs: deque[int]) -> None:
         a, b = self.fetch_a_and_b(state)
-        if a < 0 or b <= 0:
-            raise RuntimeError('attempting to execute mod with a<0 or b<=0')
+        if a < 0:
+            raise RuntimeError(
+                'attempting to execute mod instruction with a < 0'
+            )
+        if b <= 0:
+            raise RuntimeError(
+                'attempting to execute mod instruction with b <= 0'
+            )
         state.set(self.a, a % b)
+        state.ip += 1
+        state.st = ALUStatus.RUNNING
 
 
 class Equal(Instruction):
@@ -131,6 +180,8 @@ class Equal(Instruction):
     def execute(self, state: ALUState, inputs: deque[int]) -> None:
         a, b = self.fetch_a_and_b(state)
         state.set(self.a, int(a == b))
+        state.ip += 1
+        state.st = ALUStatus.RUNNING
 
 
 INSTRUCTIONS_LOOKUP: Final[dict[str, type[Instruction]]] = {
@@ -143,37 +194,6 @@ INSTRUCTIONS_LOOKUP: Final[dict[str, type[Instruction]]] = {
 }
 
 
-def run_program(
-    instructions: list[Instruction],
-    inputs: deque[int],
-    initial_state: ALUState | None = None,
-) -> ALUState:
-    state = ALUState() if initial_state is None else initial_state
-    for instruction in instructions:
-        instruction.execute(state, inputs)
-    return state
-
-
-def is_valid(model_number: int, monad_instructions: list[Instruction]) -> bool:
-    model_number_digits = deque(int(digit) for digit in str(model_number))
-    state = run_program(monad_instructions, model_number_digits)
-    return state.z == 0
-
-
-MODEL_NUMBER_DIGIT_COUNT: Final[int] = 14
-
-MODEL_NUMBER_UPPER_LIMIT: Final[int] = 10 ** MODEL_NUMBER_DIGIT_COUNT - 1
-MODEL_NUMBER_LOWER_LIMIT: Final[int] = 10 ** (MODEL_NUMBER_DIGIT_COUNT - 1)
-
-
-def generate_large_model_numbers() -> Iterator[int]:
-    model_number = MODEL_NUMBER_UPPER_LIMIT
-    while model_number >= MODEL_NUMBER_LOWER_LIMIT:
-        if '0' not in str(model_number):
-            yield model_number
-        model_number -= 1
-
-
 def parse_instructions(program: str) -> list[Instruction]:
     instructions: list[Instruction] = []
     for line in program.strip().split('\n'):
@@ -184,13 +204,99 @@ def parse_instructions(program: str) -> list[Instruction]:
     return instructions
 
 
+def run_program(
+    instructions: list[Instruction],
+    inputs: deque[int],
+    initial_state: ALUState | None = None,
+) -> ALUState:
+    state = ALUState() if initial_state is None else initial_state
+    if state.st == ALUStatus.FINISHED:
+        return state
+
+    while True:
+        if state.ip >= len(instructions):
+            state.st = ALUStatus.FINISHED
+            break
+        instruction = instructions[state.ip]
+        instruction.execute(state, inputs)
+        if state.st == ALUStatus.AWAITING_INPUT:
+            break
+
+    return state
+
+
+MODEL_NUMBER_MAX_VALID_DIGIT: Final[int] = 9
+MODEL_NUMBER_MIN_VALID_DIGIT: Final[int] = 1
+
+
+memo: dict[tuple[int, int, int, int, int, ALUStatus], str | None] = {}
+
+
+def recursively_find_largest_accepted_model_number(
+    state: ALUState, monad_instructions: list[Instruction], z_cap: int
+) -> str | None:
+    memo_key = (state.w, state.x, state.y, state.z, state.ip, state.st)
+    try:
+        return memo[memo_key]
+    except KeyError:
+        pass
+
+    if state.st == ALUStatus.FINISHED:
+        memo[memo_key] = '' if state.z == 0 else None
+        return '' if state.z == 0 else None
+    assert state.st == ALUStatus.AWAITING_INPUT
+
+    if abs(state.z) > z_cap:
+        memo[memo_key] = None
+        return None
+
+    digit = MODEL_NUMBER_MAX_VALID_DIGIT
+    while digit >= MODEL_NUMBER_MIN_VALID_DIGIT:
+        next_state = run_program(
+            monad_instructions, deque([digit]), state.copy()
+        )
+        potential_result = recursively_find_largest_accepted_model_number(
+            next_state, monad_instructions, z_cap
+        )
+        if potential_result is not None:
+            memo[memo_key] = str(digit) + potential_result
+            return str(digit) + potential_result
+        digit -= 1
+
+    memo[memo_key] = None
+    return None
+
+
+def find_largest_accepted_model_number(
+    monad_instructions: list[Instruction], z_cap: int
+) -> str | None:
+    started_state = run_program(monad_instructions, deque())
+    model_number = recursively_find_largest_accepted_model_number(
+        started_state, monad_instructions, z_cap
+    )
+    return model_number
+
+
 def part_1(file: pathlib.Path) -> None:
+    if file.stem in ('example_01', 'example_02', 'example_03'):
+        example_program = file.read_text(encoding='ascii')
+        example_instructions = parse_instructions(example_program)
+        alu_state = run_program(example_instructions, deque([10, 30]))
+        print('part 1:', repr(alu_state))
+        return
+
     monad_program = file.read_text(encoding='ascii')
     monad_instructions = parse_instructions(monad_program)
-    for model_number in generate_large_model_numbers():
-        if is_valid(model_number, monad_instructions):
-            print('part 1:', model_number)
+    z_cap = 10 ** 4  # Limit how large intermediate values of z can get
+    while True:
+        model_number = find_largest_accepted_model_number(
+            monad_instructions, z_cap
+        )
+        if model_number is not None:
             break
+        z_cap *= 10
+        memo.clear()
+    print('part 1:', model_number)
 
 
 def part_2(file: pathlib.Path) -> None:
